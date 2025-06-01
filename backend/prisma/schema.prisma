@@ -1,0 +1,53 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          Int          @id @default(autoincrement())
+  username    String       @unique
+  password    String
+  liveScore   Int          @default(0) 
+  collections Collection[]
+}
+
+model Card {
+  id         Int      @id @default(autoincrement())
+  detail     String  
+  matchId    Int?
+
+  gameMode   GameMode @relation(fields: [gameModeId], references: [id])
+  gameModeId Int
+
+  card1In Collection[] @relation("Card1")
+  card2In Collection[] @relation("Card2")
+}
+
+model Collection {
+  id         Int      @id @default(autoincrement())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     Int
+
+  card1      Card     @relation("Card1", fields: [card1Id], references: [id])
+  card1Id    Int
+
+  card2      Card     @relation("Card2", fields: [card2Id], references: [id])
+  card2Id    Int
+
+  gameMode   GameMode @relation(fields: [gameModeId], references: [id])
+  gameModeId Int
+
+  @@unique([userId, card1Id, card2Id, gameModeId])
+}
+
+model GameMode {
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
+  cards       Card[]
+  collections Collection[]
+}

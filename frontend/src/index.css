@@ -1,0 +1,18 @@
+@import 'tailwindcss';
+
+@tailwind utilities;
+@tailwind components;
+@tailwind base;
+
+@theme {
+    --color-LoginBlue: #3498DB;
+    --color-LoginGrey: #2C2C2C;
+    --color-bgOrange: #FF662F;
+    --color-createAccountgray: #252525;
+    --color-pythonOrange: #FFDE57;
+    --color-pythonBlue: #4584B6;
+    --color-javaBlue: #007396;
+    --color-javaOrange: #ED8B00;
+    --color-c#Purple: #280068;
+    --color-c#Violet: #A179DC;
+}
