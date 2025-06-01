@@ -18,7 +18,7 @@ const Summary = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [userScore, setUserScore] = useState(0);
-  const [totalPairs, setTotalPairs] = useState(0);
+  const [username, setUsername] = useState('');
 
   // Animation state for buttons
   const [buttonStates, setButtonStates] = useState({});
@@ -28,102 +28,85 @@ const Summary = () => {
     initializeSummary();
   }, []);
 
-  // ฟังก์ชันสำหรับโหลดข้อมูลทั้งหมด
+  // ฟังก์ชันสำหรับโหลดข้อมูล user และ cards
   const initializeSummary = async () => {
     setLoading(true);
     try {
-      // 1. ดึงข้อมูล user เพื่อแสดงคะแนน
-      await loadUserScore();
+      // 1. ดึงข้อมูล user เพื่อแสดง live score
+      const userResult = await getMe();
+      if (userResult.success && userResult.data) {
+        setUserScore(userResult.data.liveScore || 0);
+        setUsername(userResult.data.username);
+      }
 
       // 2. ดึงการ์ดทั้งหมดจาก game mode
-      await loadGameCards();
+      const cardsResult = await getCardsByGameMode(gameData.gameModeId);
+      if (!cardsResult.success || !cardsResult.data) {
+        setError('Failed to load cards');
+        return;
+      }
+
+      // 3. ดึงรายละเอียดของแต่ละการ์ดและจัดกลุ่มตาม matchId
+      const cards = cardsResult.data;
+      const cardDetailsPromises = cards.map(card => getCardDetail(card.id));
+      const cardDetailsResults = await Promise.all(cardDetailsPromises);
+      
+      // สร้าง map ของการ์ดทั้งหมด
+      const cardMap = {};
+      cardDetailsResults.forEach(result => {
+        if (result.success && result.data) {
+          cardMap[result.data.id] = result.data;
+        }
+      });
+
+      // 4. จัดกลุ่มการ์ดที่มี matchId เหมือนกัน
+      const matchedPairs = [];
+      const processedMatchIds = new Set();
+      
+      cards.forEach(card => {
+        if (card.matchId && !processedMatchIds.has(card.matchId)) {
+          // หาการ์ดคู่ที่มี matchId เหมือนกัน
+          const pairCard = cards.find(c => 
+            c.id !== card.id && c.matchId === card.matchId
+          );
+          
+          if (pairCard) {
+            const card1Detail = cardMap[card.id];
+            const card2Detail = cardMap[pairCard.id];
+            
+            if (card1Detail && card2Detail) {
+              // เช็คว่าคู่นี้ตรงกับที่ user จับคู่หรือไม่
+              const userMatch = gameData.matchedPairs?.find(match => 
+                (match.card1Id === card.id && match.card2Id === pairCard.id) ||
+                (match.card1Id === pairCard.id && match.card2Id === card.id)
+              );
+
+              matchedPairs.push({
+                id: matchedPairs.length + 1,
+                card1: card1Detail,
+                card2: card2Detail,
+                question: card1Detail.detail,
+                userAnswer: card2Detail.detail,
+                isCorrect: userMatch ? userMatch.isMatch : true, // ถ้าไม่มีข้อมูลจาก user ให้ถือว่าถูก
+                isUserMatched: !!userMatch, // บอกว่า user จับคู่หรือไม่
+                color: getRandomColor(),
+                isAddedToProfile: false,
+                gameModeId: gameData.gameModeId
+              });
+            }
+            
+            processedMatchIds.add(card.matchId);
+          }
+        }
+      });
+
+      setQuestions(matchedPairs);
 
     } catch (error) {
       console.error('Error initializing summary:', error);
       setError('Failed to load game summary');
     } finally {
       setLoading(false);
-    }
-  };
-
-  // ฟังก์ชันดึงคะแนน user
-  const loadUserScore = async () => {
-    try {
-      const userResult = await getMe();
-      if (userResult.success && userResult.data) {
-        setUserScore(userResult.data.liveScore || 0);
-      }
-    } catch (error) {
-      console.error('Error fetching user score:', error);
-    }
-  };
-
-  // ฟังก์ชันโหลดการ์ดและสร้างคำถาม
-  const loadGameCards = async () => {
-    try {
-      // ดึงการ์ดทั้งหมดจาก game mode
-      const cardsResult = await getCardsByGameMode(gameData.gameModeId);
-      if (!cardsResult.success || !cardsResult.data) {
-        setError('Failed to load game cards');
-        return;
-      }
-
-      const allCards = cardsResult.data;
-      
-      // สร้างคู่การ์ดที่ match กัน (การ์ดที่มี matchId เดียวกัน)
-      const cardPairs = [];
-      const processedMatchIds = new Set();
-
-      for (const card of allCards) {
-        if (card.matchId && !processedMatchIds.has(card.matchId)) {
-          // หาการ์ดคู่ที่มี matchId เดียวกัน
-          const matchingCard = allCards.find(c => 
-            c.id !== card.id && c.matchId === card.matchId
-          );
-
-          if (matchingCard) {
-            // ดึง detail ของทั้งสองการ์ด
-            const [card1Detail, card2Detail] = await Promise.all([
-              getCardDetail(card.id),
-              getCardDetail(matchingCard.id)
-            ]);
-
-            if (card1Detail.success && card2Detail.success) {
-              // เช็คว่าคู่นี้ user จับคู่ถูกหรือเปล่า
-              const userMatch = gameData.matchedPairs?.find(pair => 
-                (pair.card1Id === card.id && pair.card2Id === matchingCard.id) ||
-                (pair.card1Id === matchingCard.id && pair.card2Id === card.id)
-              );
-
-              cardPairs.push({
-                id: cardPairs.length + 1,
-                card1: {
-                  id: card.id,
-                  detail: card1Detail.data.detail
-                },
-                card2: {
-                  id: matchingCard.id,
-                  detail: card2Detail.data.detail
-                },
-                isCorrect: userMatch ? userMatch.isMatch : false,
-                wasAttempted: !!userMatch, // user พยายามจับคู่หรือเปล่า
-                color: getRandomColor(),
-                isAddedToProfile: false,
-                gameModeId: gameData.gameModeId
-              });
-
-              processedMatchIds.add(card.matchId);
-            }
-          }
-        }
-      }
-
-      setQuestions(cardPairs);
-      setTotalPairs(cardPairs.length);
-
-    } catch (error) {
-      console.error('Error loading game cards:', error);
-      setError('Failed to load game cards');
     }
   };
 
@@ -213,14 +196,12 @@ const Summary = () => {
     }
   };
 
-  // ฟังก์ชันสำหรับจบเกมและรีเซ็ตคะแนน
+  // ฟังก์ชันสำหรับ finish game และรีเซ็ตคะแนน
   const handleFinishGame = async () => {
     try {
       const result = await finishGame();
       if (result.success) {
         console.log('Game finished successfully');
-        // อัพเดทคะแนน user หลังจากจบเกม
-        await loadUserScore();
       } else {
         console.error('Failed to finish game:', result.msg);
       }
@@ -231,7 +212,7 @@ const Summary = () => {
 
   const handlePlayAgain = async () => {
     setButtonStates(prev => ({ ...prev, playAgain: true }));
-    await handleFinishGame();
+    await handleFinishGame(); // รีเซ็ตคะแนนก่อนไปหน้าใหม่
     setTimeout(() => {
       navigate('/main');
     }, 200);
@@ -239,7 +220,7 @@ const Summary = () => {
 
   const handleHome = async () => {
     setButtonStates(prev => ({ ...prev, home: true }));
-    await handleFinishGame();
+    await handleFinishGame(); // รีเซ็ตคะแนนก่อนไปหน้าหลัก
     setTimeout(() => {
       navigate('/main');
     }, 200);
@@ -247,7 +228,7 @@ const Summary = () => {
 
   const handleViewProfile = async () => {
     setButtonStates(prev => ({ ...prev, profile: true }));
-    await handleFinishGame();
+    await handleFinishGame(); // รีเซ็ตคะแนนก่อนไปหน้าโปรไฟล์
     setTimeout(() => {
       navigate('/profile');
     }, 200);
@@ -255,15 +236,15 @@ const Summary = () => {
 
   const handleBack = async () => {
     setButtonStates(prev => ({ ...prev, back: true }));
-    await handleFinishGame();
+    await handleFinishGame(); // รีเซ็ตคะแนนก่อนย้อนกลับ
     setTimeout(() => {
       navigate(-1);
     }, 150);
   };
 
   const selectedCount = questions.filter(q => q.isAddedToProfile).length;
-  const correctAnswers = questions.filter(q => q.isCorrect && q.wasAttempted).length;
-  const attemptedAnswers = questions.filter(q => q.wasAttempted).length;
+  const correctCount = questions.filter(q => q.isCorrect && q.isUserMatched).length;
+  const totalUserMatches = questions.filter(q => q.isUserMatched).length;
 
   const ArrowIcon = () => (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="transition-all duration-300 group-hover:translate-x-1">
@@ -315,7 +296,7 @@ const Summary = () => {
 
   return (
     <div className="min-h-screen bg-orange-300 flex flex-col font-pixelify" style={{ fontFamily: 'monospace' }}>
-      {/* Header matching Profile template */}
+      {/* Header */}
       <div className="flex items-center justify-between p-4 bg-bgOrange">
         <button
           onClick={handleBack}
@@ -327,8 +308,15 @@ const Summary = () => {
         </button>
         <div className="text-center">
           <div className="text-white text-6xl font-bold animate-pulse hover:animate-bounce transition-all duration-300">SUMMARY</div>
-          <div className="text-white text-lg">Live Score: {userScore}</div>
-          <div className="text-white text-md">Correct: {correctAnswers}/{totalPairs}</div>
+          <div className="text-white text-lg">
+            {username && <div>Player: {username}</div>}
+            <div>Score: {userScore}/8 </div>
+            {totalUserMatches > 0 && (
+              <div className="text-sm">
+                Correct: {correctCount}/{totalUserMatches} matches
+              </div>
+            )}
+          </div>
         </div>
         <div className="w-6"></div> {/* Spacer */}
       </div>
@@ -336,11 +324,11 @@ const Summary = () => {
       <div className="flex justify-center py-3">
       </div>
 
-      {/* Questions List - matching Profile card style */}
+      {/* Questions List */}
       <div className="flex-1 px-4 pb-6">
         {questions.length === 0 ? (
           <div className="text-center text-white text-xl mt-10">
-            No card pairs available for this game mode
+            No matched card pairs found for this game mode
           </div>
         ) : (
           <div className="space-y-4">
@@ -349,53 +337,49 @@ const Summary = () => {
                 {/* Card matching Profile template style */}
                 <div className={`${question.color} rounded-lg p-4 shadow-lg border-4 border-white relative transition-all duration-300 hover:shadow-2xl hover:scale-102 hover:-translate-y-1 ${
                   question.isAddedToProfile ? 'ring-4 ring-yellow-400 animate-pulse' : ''
-                } ${!question.wasAttempted ? 'opacity-75' : ''}`}>
+                }`}>
                   
                   {/* Question Number - top left */}
                   <div className="absolute top-2 left-2 bg-white text-black font-bold px-2 py-1 rounded text-sm min-w-[24px] text-center transform hover:scale-110 hover:rotate-12 transition-all duration-200">
                     {index + 1}
                   </div>
 
-                  {/* Status Indicator - top right */}
-                  <div className="absolute top-2 right-2 flex-shrink-0">
-                    {!question.wasAttempted ? (
-                      <div className="w-6 h-6 bg-gray-400 rounded-full flex items-center justify-center text-white text-xs font-bold">
-                        ?
-                      </div>
-                    ) : question.isCorrect ? (
-                      <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center hover:bg-green-400 hover:scale-125 transition-all duration-200 animate-bounce">
-                        <CheckIcon />
-                      </div>
+                  {/* Match status indicator - top right */}
+                  <div className="absolute top-2 right-2 flex items-center space-x-1">
+                    {question.isUserMatched ? (
+                      <>
+                        {question.isCorrect ? (
+                          <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center hover:bg-green-400 hover:scale-125 transition-all duration-200 animate-bounce">
+                            <CheckIcon />
+                          </div>
+                        ) : (
+                          <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-400 hover:scale-125 transition-all duration-200 animate-bounce">
+                            <XIcon />
+                          </div>
+                        )}
+                        <span className="text-xs bg-blue-500 text-white px-1 rounded">USER</span>
+                      </>
                     ) : (
-                      <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-400 hover:scale-125 transition-all duration-200 animate-bounce">
-                        <XIcon />
-                      </div>
+                      <span className="text-xs bg-gray-500 text-white px-2 py-1 rounded">SYSTEM</span>
                     )}
                   </div>
                   
                   {/* Card 1 section */}
-                  <div className="font-pixelify bg-white text-black p-3 rounded-md mb-3 font-mono text-sm border-2 border-gray-300 mt-8 hover:border-blue-400 hover:shadow-inner transition-all duration-200">
-                    <div className="font-bold text-xs text-gray-600 mb-1">Card 1 (ID: {question.card1?.id})</div>
-                    {question.card1?.detail}
+                  <div className="font-pixelify bg-white text-black p-3 rounded-md mb-3 font-mono text-sm border-2 border-gray-300 mt-10 hover:border-blue-400 hover:shadow-inner transition-all duration-200">
+                    <div className="font-bold text-xs text-gray-600 mb-1">
+                      Card 1 (ID: {question.card1?.id}) 
+                      {question.card1?.matchId && ` - Match Group: ${question.card1.matchId}`}
+                    </div>
+                    {question.question}
                   </div>
                   
                   {/* Card 2 section */}
                   <div className="font-pixelify bg-white text-black p-3 rounded-md font-mono text-sm border-2 border-gray-300 hover:border-blue-400 hover:shadow-inner transition-all duration-200">
-                    <div className="font-bold text-xs text-gray-600 mb-1">Card 2 (ID: {question.card2?.id})</div>
-                    {question.card2?.detail}
-                  </div>
-
-                  {/* Match Status */}
-                  <div className="mt-2 text-center">
-                    <span className={`inline-block px-2 py-1 rounded-full text-xs font-bold ${
-                      !question.wasAttempted 
-                        ? 'bg-gray-200 text-gray-600' 
-                        : question.isCorrect 
-                          ? 'bg-green-200 text-green-800' 
-                          : 'bg-red-200 text-red-800'
-                    }`}>
-                      {!question.wasAttempted ? 'Not Attempted' : question.isCorrect ? 'Matched!' : 'Not Matched'}
-                    </span>
+                    <div className="font-bold text-xs text-gray-600 mb-1">
+                      Card 2 (ID: {question.card2?.id})
+                      {question.card2?.matchId && ` - Match Group: ${question.card2.matchId}`}
+                    </div>
+                    {question.userAnswer}
                   </div>
                   
                   {/* Add to Profile Button - bottom right */}
