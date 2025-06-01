@@ -58,7 +58,7 @@ const Summary = () => {
           cardMap[result.data.id] = result.data;
         }
       });
-
+//
       // 4. จัดกลุ่มการ์ดที่มี matchId เหมือนกัน
       const matchedPairs = [];
       const processedMatchIds = new Set();

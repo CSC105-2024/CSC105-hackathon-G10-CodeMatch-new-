@@ -1,47 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getCardsByGameMode, getCardDetail, startGame, updateGame, finishGame } from '../api/game';
 
 const Java = () => {
   const navigate = useNavigate();
   
-  // Java programming concepts for card pairs
-  const cardData = [
-    { id: 1, concept: 'Class', description: 'Blueprint for objects' },
-    { id: 2, concept: 'Object', description: 'Instance of a class' },
-    { id: 3, concept: 'Method', description: 'Function inside a class' },
-    { id: 4, concept: 'Variable', description: 'Container for data' },
-    { id: 5, concept: 'Array', description: 'Collection of elements' },
-    { id: 6, concept: 'Loop', description: 'Repeated execution' },
-    { id: 7, concept: 'Inheritance', description: 'Class extends another' },
-    { id: 8, concept: 'Exception', description: 'Error handling mechanism' }
-  ];
-
-  // Create pairs by duplicating each concept
-  const createCardPairs = () => {
-    const pairs = [];
-    cardData.forEach((item, index) => {
-      pairs.push({ ...item, pairId: index, uniqueId: `${index}-a`, type: 'concept' });
-      pairs.push({ ...item, pairId: index, uniqueId: `${index}-b`, type: 'description' });
-    });
-    return shuffleArray(pairs);
-  };
-
-  const shuffleArray = (array) => {
-    const shuffled = [...array];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
-  };
-
-  const [cards, setCards] = useState(createCardPairs());
+  // State variables
+  const [cards, setCards] = useState([]);
   const [flippedCards, setFlippedCards] = useState([]);
+  const [flippedCardDetails, setFlippedCardDetails] = useState({});
   const [matchedPairs, setMatchedPairs] = useState([]);
   const [score, setScore] = useState(0);
   const [matchAttempts, setMatchAttempts] = useState(0);
   const [theme, setTheme] = useState('default');
   const [isMobile, setIsMobile] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [gameStarted, setGameStarted] = useState(false);
 
   // Detect mobile screen size
   useEffect(() => {
@@ -54,7 +28,55 @@ const Java = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Theme configurations with card colors
+  // Initialize game
+  useEffect(() => {
+    initializeGame();
+  }, []);
+
+  const initializeGame = async () => {
+    try {
+      setLoading(true);
+      
+      // Start game session
+      const startResult = await startGame();
+      if (!startResult.success) {
+        console.error('Failed to start game:', startResult.msg);
+        return;
+      }
+      
+      console.log('Game started successfully');
+      
+      // Get cards for Java game mode (assuming gameModeId = 1 for Java)
+      const cardsResult = await getCardsByGameMode(1);
+      if (!cardsResult.success || !cardsResult.data) {
+        console.error('Failed to fetch cards:', cardsResult.msg);
+        return;
+      }
+
+      console.log('Cards fetched:', cardsResult.data);
+
+      // Shuffle the cards
+      const shuffledCards = shuffleArray([...cardsResult.data]);
+      setCards(shuffledCards);
+      setGameStarted(true);
+      
+    } catch (error) {
+      console.error('Error initializing game:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const shuffleArray = (array) => {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  };
+
+  // Theme configurations
   const themes = {
     default: {
       name: 'Default',
@@ -144,7 +166,7 @@ const Java = () => {
 
   const currentTheme = themes[theme];
 
-  const handleCardClick = (cardId) => {
+  const handleCardClick = async (cardId) => {
     // Don't allow interaction with matched cards
     if (matchedPairs.includes(cardId)) {
       return;
@@ -153,6 +175,11 @@ const Java = () => {
     // If card is already flipped, toggle it off
     if (flippedCards.includes(cardId)) {
       setFlippedCards(prev => prev.filter(id => id !== cardId));
+      setFlippedCardDetails(prev => {
+        const updated = { ...prev };
+        delete updated[cardId];
+        return updated;
+      });
       return;
     }
 
@@ -161,43 +188,97 @@ const Java = () => {
       return;
     }
 
-    // Add the card to flipped cards
-    const newFlippedCards = [...flippedCards, cardId];
-    setFlippedCards(newFlippedCards);
+    try {
+      // Get card detail from API
+      const cardDetailResult = await getCardDetail(cardId);
+      if (!cardDetailResult.success || !cardDetailResult.data) {
+        console.error('Failed to get card detail:', cardDetailResult.msg);
+        return;
+      }
+
+      console.log('Card detail for', cardId, ':', cardDetailResult.data);
+
+      // Add the card to flipped cards and store its detail
+      setFlippedCards(prev => [...prev, cardId]);
+      setFlippedCardDetails(prev => ({
+        ...prev,
+        [cardId]: cardDetailResult.data.detail
+      }));
+
+    } catch (error) {
+      console.error('Error getting card detail:', error);
+    }
   };
 
-  const checkMatch = (flippedCardIds) => {
-    const [firstCardId, secondCardId] = flippedCardIds;
-    const firstCard = cards.find(card => card.uniqueId === firstCardId);
-    const secondCard = cards.find(card => card.uniqueId === secondCardId);
+  const handleMatch = async () => {
+    if (flippedCards.length !== 2) {
+      return;
+    }
 
-    if (firstCard.pairId === secondCard.pairId) {
-      // Match found - increase score and keep cards matched
-      setMatchedPairs(prev => [...prev, firstCardId, secondCardId]);
-      setScore(prev => prev + 1);
-      setFlippedCards([]);
-    } else {
-      // No match - just flip cards back, do nothing else
-      setTimeout(() => {
+    try {
+      const [card1Id, card2Id] = flippedCards;
+      
+      console.log('Attempting to match cards:', card1Id, card2Id);
+      
+      // Call updateGame API
+      const updateResult = await updateGame(card1Id, card2Id);
+      
+      console.log('Update result:', updateResult);
+      
+      if (!updateResult.success || !updateResult.data) {
+        console.error('Failed to update game:', updateResult.msg);
+        return;
+      }
+
+      const { isMatch, score: newScore } = updateResult.data;
+      
+      console.log('Match result:', { isMatch, score: newScore });
+      
+      // Update score
+      setScore(newScore);
+      setMatchAttempts(prev => prev + 1);
+
+      if (isMatch) {
+        // Match found - keep cards matched
+        setMatchedPairs(prev => [...prev, card1Id, card2Id]);
         setFlippedCards([]);
-      }, 1000); // Give 1 second to see the cards before flipping back
-    }
+        console.log('Cards matched successfully!');
+      } else {
+        // No match - flip cards back after delay
+        console.log('Cards do not match, flipping back...');
+        setTimeout(() => {
+          setFlippedCards([]);
+          setFlippedCardDetails(prev => {
+            const updated = { ...prev };
+            delete updated[card1Id];
+            delete updated[card2Id];
+            return updated;
+          });
+        }, 1000);
+      }
 
-    setMatchAttempts(prev => prev + 1);
+    } catch (error) {
+      console.error('Error updating game:', error);
+    }
   };
 
-  const handleMatch = () => {
-    if (flippedCards.length === 2) {
-      checkMatch(flippedCards);
-    }
-  };
-
-  const resetGame = () => {
-    setCards(createCardPairs());
+  const resetGame = async () => {
+    await initializeGame();
     setFlippedCards([]);
+    setFlippedCardDetails({});
     setMatchedPairs([]);
     setScore(0);
     setMatchAttempts(0);
+  };
+
+  const handleFinishGame = async () => {
+    try {
+      await finishGame();
+      navigate('/');
+    } catch (error) {
+      console.error('Error finishing game:', error);
+      navigate('/');
+    }
   };
 
   const isCardFlipped = (cardId) => {
@@ -210,8 +291,8 @@ const Java = () => {
 
   const getBorderColor = (cardId) => {
     if (isCardMatched(cardId)) {
-      const card = cards.find(c => c.uniqueId === cardId);
-      return currentTheme.matchedColors[card.pairId] || currentTheme.matchedColors[0];
+      const cardIndex = cards.findIndex(c => c.id === cardId);
+      return currentTheme.matchedColors[cardIndex % currentTheme.matchedColors.length] || currentTheme.matchedColors[0];
     }
     return currentTheme.defaultBorder;
   };
@@ -234,7 +315,23 @@ const Java = () => {
     return currentTheme.matchIndicator;
   };
 
-  const gameComplete = matchedPairs.length === 16;
+  const gameComplete = matchedPairs.length === cards.length;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-r from-red-600 to-javaBlue p-4 md:p-8 font-pixelify flex items-center justify-center">
+        <div className="text-white text-2xl">Loading game...</div>
+      </div>
+    );
+  }
+
+  if (!gameStarted || cards.length === 0) {
+    return (
+      <div className="min-h-screen bg-gradient-to-r from-red-600 to-javaBlue p-4 md:p-8 font-pixelify flex items-center justify-center">
+        <div className="text-white text-2xl">Failed to load game. Please try again.</div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-r from-red-600 to-javaBlue p-4 md:p-8 font-pixelify">
@@ -245,8 +342,8 @@ const Java = () => {
           <div className="flex flex-col md:flex-row justify-between items-center text-white text-lg md:text-xl gap-4">
             <span>Category: Java</span>
             <div className="flex items-center gap-4 md:gap-8">
-              <span>Match {matchAttempts}/8</span>
-              <span>Score {score}/8</span>
+              <span>Attempts: {matchAttempts}</span>
+              <span>Score: {score}</span>
             </div>
           </div>
           
@@ -264,57 +361,47 @@ const Java = () => {
           </div>
         </div>
 
-        {/* Game Board - 4x4 Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6 mb-8 max-w-5xl mx-auto">
-          {cards.map((card, index) => (
+        {/* Game Board - Dynamic Grid */}
+        <div className={`grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6 mb-8 max-w-5xl mx-auto`}>
+          {cards.map((card) => (
             <div
-              key={card.uniqueId}
+              key={card.id}
               className={`relative aspect-[3/4] cursor-pointer group transition-all duration-200 ${
-                matchedPairs.includes(card.uniqueId) 
+                matchedPairs.includes(card.id) 
                   ? 'pointer-events-none' 
                   : 'hover:scale-105 active:scale-95 active:rotate-1'
               }`}
-              onClick={() => handleCardClick(card.uniqueId)}
+              onClick={() => handleCardClick(card.id)}
             >
-              <div className={`w-full h-full rounded-xl border-4 md:border-6 ${getBorderColor(card.uniqueId)} transition-all duration-300 transform ${
-                getCardBackgroundClass(card.uniqueId)
+              <div className={`w-full h-full rounded-xl border-4 md:border-6 ${getBorderColor(card.id)} transition-all duration-300 transform ${
+                getCardBackgroundClass(card.id)
               } ${
-                isCardFlipped(card.uniqueId) ? 'shadow-lg' : ''
+                isCardFlipped(card.id) ? 'shadow-lg' : ''
               } ${
-                getSelectedRingClass(card.uniqueId)
+                getSelectedRingClass(card.id)
               }`}>
                 
                 {/* Card Content */}
                 <div className="flex flex-col items-center justify-center h-full p-2 md:p-4 text-center">
-                  {isCardFlipped(card.uniqueId) ? (
-                    // Flipped card shows content
+                  {isCardFlipped(card.id) ? (
+                    // Flipped card shows detail
                     <div className={`${currentTheme.cardText} animate-in fade-in duration-300`}>
                       <div className="font-bold text-sm md:text-lg mb-2 md:mb-3">
-                        {card.type === 'concept' ? card.concept : card.description}
+                        {flippedCardDetails[card.id] || 'Loading...'}
                       </div>
-                      <div className="text-xs md:text-sm opacity-70 bg-gray-100 px-2 md:px-3 py-1 md:py-2 rounded-lg">
-                        {card.type === 'concept' ? 'Concept' : 'Definition'}
-                      </div>
-                      {/* PC: Show description in card */}
-                      {!isMobile && (
-                        <div className="text-xs mt-2 text-white bg-gray-600 px-2 py-1 rounded">
-                          <strong>{card.type === 'concept' ? 'Def: ' : 'Concept: '}</strong>
-                          {card.type === 'concept' ? card.description : card.concept}
-                        </div>
-                      )}
                     </div>
                   ) : (
                     // Card back shows Java logo
                     <div className="text-center">
                       <div className="text-gray-400 font-bold text-lg md:text-3xl mb-2 md:mb-3">JAVA</div>
-                      <img src="../public/logoCard2.png" alt="Logo"></img>
+                      <img src="../public/logoCard2.png" alt="Logo" className="mx-auto mb-2"></img>
                       <div className="text-gray-500 text-xs md:text-sm">Click to reveal</div>
                     </div>
                   )}
                 </div>
 
-                {/* Matched indicator - enhanced visibility with theme colors */}
-                {isCardMatched(card.uniqueId) && (
+                {/* Matched indicator */}
+                {isCardMatched(card.id) && (
                   <div className={`absolute inset-0 ${getMatchIndicatorClass()} rounded-xl border-4 md:border-6 animate-pulse`}></div>
                 )}
 
@@ -325,29 +412,19 @@ const Java = () => {
           ))}
         </div>
 
-        {/* Mobile: Description under the lowest card */}
+        {/* Mobile: Description under the cards */}
         {isMobile && flippedCards.length > 0 && (
           <div className="mb-8 animate-in slide-in-from-bottom duration-300">
             <div className="bg-white/95 backdrop-blur rounded-xl p-4 md:p-6 shadow-2xl">
               <h3 className="text-lg font-bold text-gray-800 mb-4">Card Details</h3>
               <div className="space-y-3">
-                {flippedCards.map((cardId) => {
-                  const card = cards.find(c => c.uniqueId === cardId);
-                  return (
-                    <div key={cardId} className="bg-gray-50 rounded-lg p-3">
-                      <div className="font-semibold text-base text-gray-800 mb-1">
-                        {card.type === 'concept' ? card.concept : card.description}
-                      </div>
-                      <div className="text-sm text-gray-600 mb-2">
-                        {card.type === 'concept' ? 'Concept' : 'Definition'}
-                      </div>
-                      <div className="text-sm text-gray-700">
-                        <strong>{card.type === 'concept' ? 'Definition: ' : 'Concept: '}</strong>
-                        {card.type === 'concept' ? card.description : card.concept}
-                      </div>
+                {flippedCards.map((cardId) => (
+                  <div key={cardId} className="bg-gray-50 rounded-lg p-3">
+                    <div className="font-semibold text-base text-gray-800">
+                      {flippedCardDetails[cardId] || 'Loading...'}
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -396,7 +473,7 @@ const Java = () => {
           <div className="text-center bg-white/10 backdrop-blur rounded-xl p-6 md:p-8 mb-8 animate-in slide-in-from-bottom duration-500">
             <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">🎉 Congratulations!</h2>
             <p className="text-white/90 text-base md:text-lg">You completed the Java game!</p>
-            <p className="text-white/90 text-base md:text-lg mb-6">Final Score: {score}/8 in {matchAttempts} attempts</p>
+            <p className="text-white/90 text-base md:text-lg mb-6">Final Score: {score} in {matchAttempts} attempts</p>
             <div className="flex flex-col md:flex-row gap-4 justify-center">
               <button
                 onClick={resetGame}
@@ -405,7 +482,7 @@ const Java = () => {
                 Play Again
               </button>
               <button
-                onClick={() => navigate('/')}
+                onClick={handleFinishGame}
                 className="px-6 py-3 bg-purple-500 hover:bg-purple-600 active:bg-purple-700 text-white rounded-lg text-lg font-bold transition-all duration-200 transform hover:scale-105 active:scale-95"
               >
                 Back to Menu

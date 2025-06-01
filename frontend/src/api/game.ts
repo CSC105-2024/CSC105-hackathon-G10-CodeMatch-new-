@@ -77,7 +77,7 @@ export const getCardsByGameMode = async (gameModeId: number) => {
     };
   }
 };
-
+//asd
 export const getCardDetail = async (cardId: number) => {
   try {
     const res = await Axios.get<ApiResponse<Card>>(`/game/card/${cardId}`);

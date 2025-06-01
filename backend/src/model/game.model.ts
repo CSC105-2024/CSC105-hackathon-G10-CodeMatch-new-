@@ -53,7 +53,10 @@ export const isCardMatch = async (card1Id: number, card2Id: number) => {
   if (!card1 || !card2) {
     throw new Error('Card not found');
   }
-
-  return card1.matchId === card2.matchId;
+  
+  return (
+  card1.matchId === card2.id ||
+    card2.matchId === card1.id
+  );
 };
 
